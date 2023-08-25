@@ -1,0 +1,138 @@
+---
+output: 
+  html_document:
+    code_folding: "hide"
+title: NBA over/under historical odds
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+---
+
+(This was written in a hurry, do not use it as a "good code" sample!)
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r get-data}
+library(dplyr)
+library(ggplot2)
+
+url <- 'https://www.rotowire.com/betting/nba/tables/games-archive.php'
+
+raw <- jsonlite::read_json(url)
+df_raw <- purrr::map_df(raw, tibble::as_tibble)
+df <- df_raw %>% select(
+  date = game_date, 
+  home = home_team_stats_id, 
+  away = visit_team_stats_id, 
+  prediction = game_over_under, 
+  total
+)
+df <- df[df$prediction != "", ]
+df <- df %>% mutate(
+  prediction = as.numeric(prediction),
+  total = as.numeric(total),
+  diff = prediction - total,
+  diff_abs = abs(diff),
+  diff_percent = round(diff_abs / prediction * 100, 1)
+)
+
+df <- df %>% mutate(
+  prediction_bin = case_when(
+    prediction < 195 ~ "[0, 195)",
+    prediction < 200 ~ "[195-200)",
+    prediction < 205 ~ "[200-205)",
+    prediction < 210 ~ "[205-210)",
+    prediction < 215 ~ "[210-215)",
+    prediction < 220 ~ "[215-220)",
+    prediction < 225 ~ "[220-225)",
+    prediction < 230 ~ "[225-230)",
+    prediction < 235 ~ "[230-235)",
+    prediction < 240 ~ "[235-240)",
+    prediction < 245 ~ "[240-245)",
+    TRUE             ~ "[245, Inf)"
+  )
+)
+```
+
+Using `r url`, there are `r nrow(df)` games from `r min(df$date)` to `r max(df$date)`.
+
+Here's how the data looks like:
+
+```{r}
+reactable::reactable(df)
+```
+
+Mean predicted o/u: `r mean(df$prediction)`  
+Mean total score: `r mean(df$total)`  
+Median predicted o/u: `r median(df$prediction)`  
+Median total score: `r median(df$total)`  
+They're all very very similar
+
+Mean difference between prediction and real score: `r mean(df$diff)`  
+It makes sense that it's ~0 but it can also be useful to look at the absolute difference between prediction and score.  
+Mean absolute difference: `r mean(df$diff_abs)`
+
+O/U prediction vs total score:
+
+```{r}
+ggplot(df, aes(prediction, total)) + 
+  geom_hex(binwidth = c(5, 5)) +
+  theme_bw(14) + 
+  scale_x_continuous(limits = c(150, 300)) +
+  scale_y_continuous(limits = c(150, 300)) +
+  geom_abline(slope = 1, intercept = 0) +
+  xlab("over/under prediction") +
+  ylab("True score")
+```
+
+I added a y=x line for reference. Looks like the predictions are pretty accurate.
+
+Histogram of the difference between real and predicted:
+
+```{r}
+ggplot(df, aes(diff)) + 
+  geom_histogram(binwidth = 5, color = "black") +
+  ggplot2::scale_x_continuous(limits = c(-50, 50), n.breaks = 20) +
+  theme_bw(14) +
+  xlab("(over/under prediction) - (true score)") +
+  ylab("# of games")
+```
+
+Same plot but using absolute difference instead:
+
+```{r}
+ggplot(df, aes(diff_abs)) + 
+  geom_histogram(binwidth = 5, color = "black", boundary = 0) +
+  ggplot2::scale_x_continuous(limits = c(0, 50), n.breaks = 10) +
+  theme_bw(14) +
+  xlab("(over/under prediction) - (true score) absolute value") +
+  ylab("# of games")
+```
+
+Might be interesting to look at the % difference instead of absolute difference (for example, if prediction was 200 and score was 210, the different is 10 and the % difference is 10/200*100 = 5%):
+
+```{r}
+ggplot(df, aes(diff_percent)) + 
+  geom_histogram(binwidth = 2, color = "black", boundary = 0) +
+  ggplot2::scale_x_continuous(limits = c(0, 50), n.breaks = 10) +
+  theme_bw(14) +
+  xlab("% difference between prediction and outcome") +
+  ylab("# of games")
+```
+
+I can't find anything abnormal by looking at the entire dataset. Let's try grouping the predicted o/u by increments of 5, and then look at the absolute difference:
+
+```{r}
+ggplot(df, aes(prediction_bin, diff_abs)) + 
+  geom_boxplot(outlier.shape = NA) +
+  theme_bw(14) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) + 
+  xlab("over/under prediction") +
+  ylab("difference absolute value") +
+  scale_y_continuous(limits = c(-5, 60), breaks = seq(0, 50, 10)) +
+  theme(panel.grid.minor = element_blank()) +
+  geom_text(data=data.frame(), aes(x=1:12, y=-5, label=as.numeric(table(df$prediction_bin))), col='red', size=5) +
+  geom_text(data = data.frame(), aes(x=6, y=54, label="red is # of games in each bin\nthick line inside box is median\ntop and bottom of each box is 75th/25th percentile\nvertical lines going up and down are max/min"), size = 5)
+```
+
+Every group looks very similar :/
